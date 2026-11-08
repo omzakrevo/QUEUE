@@ -72,3 +72,18 @@ simulée), diffusion temps réel, conservation des données après redémarrage,
 
 - [Architecture et API](docs/ARCHITECTURE.md)
 - Cahier des charges d'origine : [docs/cahier-des-charges.md](docs/cahier-des-charges.md)
+
+## Application Android / Windows (Flutter)
+
+Dossier `mobile/` : une seule application, deux modes selon le rôle du compte
+(`borne` → distribution des tickets plein écran avec QR ; `agent`/`superviseur`/`administrateur` →
+poste de guichet). À la première ouverture : adresse du serveur (ex. `192.168.1.10`), identifiant,
+mot de passe, et pour une borne le n° de terminal.
+
+L'APK est compilé par GitHub Actions (`.github/workflows/android-apk.yml`) : onglet *Actions* →
+dernier run → artefact `omza-queue-apk`. En local : `cd mobile && flutter build apk --release`
+(Android SDK requis). L'APK est signé avec la clé de debug : pour une diffusion commerciale, configurez
+une clé de signature de production.
+
+Limites actuelles : pas d'impression USB depuis l'application (impression réseau gérée par le serveur) ;
+l'application n'a été vérifiée que par `flutter analyze` et ses tests unitaires, pas encore sur un appareil.
