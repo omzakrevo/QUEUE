@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Borne OMZA QUEUE</title>
+<link rel="stylesheet" href="/shared/common.css">
+<style>
+  body{min-height:100vh;user-select:none;-webkit-user-select:none}
+  main{padding:3vh 4vw;max-width:1100px;margin:0 auto;text-align:center}
+  h1{font-size:clamp(1.6rem,4vw,2.6rem);margin:.5rem 0 .3rem} .sub{color:var(--muted);font-size:clamp(1rem,2.2vw,1.4rem);margin-bottom:3vh}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:2.2vh 2vw}
+  .grid button{min-height:16vh;font-size:clamp(1.4rem,3vw,2.2rem);border-radius:22px;background:var(--c);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:.3em}
+  .grid button small{font-weight:400;font-size:.55em;opacity:.9}
+  #ticket{position:fixed;inset:0;background:var(--bg);display:none;flex-direction:column;align-items:center;justify-content:center;gap:1.2vh;z-index:30;text-align:center;padding:16px}
+  #ticket .n{font-size:clamp(5rem,16vw,11rem);font-weight:800;line-height:1}
+  #ticket img{width:min(30vh,60vw);background:#fff;padding:8px;border-radius:12px}
+  #msg{color:var(--bad);min-height:1.5em;margin-top:2vh;font-size:1.2rem}
+  #exit{position:fixed;right:6px;bottom:6px;opacity:.15;font-size:.7rem;padding:.4em .6em}
+</style></head><body>
+<main><h1 id="org">Bienvenue</h1><div class="sub">Touchez votre service pour obtenir un ticket</div>
+  <div class="grid" id="grid"></div><div id="msg"></div></main>
+<div id="ticket">
+  <div id="tsvc" style="font-size:2rem"></div><div class="n" id="tnum"></div>
+  <div id="tinfo" style="font-size:1.6rem"></div>
+  <img id="tqr" alt="QR Code de suivi"><div style="color:var(--muted)">Scannez pour suivre votre attente (Wi-Fi de l'établissement)</div>
+  <div id="tprint" style="color:var(--warn);font-size:1.1rem"></div>
+  <button class="secondary" id="reprint" style="display:none">Réimprimer</button>
+</div>
+<button class="secondary" id="exit">Quitter</button>
+<script src="/shared/common.js"></script>
+<script>
+const params = new URLSearchParams(location.search);
+const terminalId = params.get('terminal') ? Number(params.get('terminal')) : null;
+let busy = false, lastTicketId = null, hideTimer = null;
+const say = (m) => { document.getElementById('msg').textContent = m || ''; };
+
+async function load() {
+  const [services, s] = await Promise.all([Q.api('/api/services'), Q.api('/api/settings')]);
+  document.getElementById('org').textContent = s.org_name;
+  document.getElementById('grid').innerHTML = services.filter((x) => x.active).map((x) =>
+    `<button data-id="${x.id}" style="--c:${Q.esc(x.color)}">${Q.esc(x.name)}<small>${Q.esc(x.description || '')}</small></button>`).join('');
+}
+document.getElementById('grid').onclick = async (e) => {
+  const b = e.target.closest('button'); if (!b || busy) return;
+  busy = true; say('');
+  try {
+    const r = await Q.api('/api/tickets', { body: { service_id: Number(b.dataset.id), terminal_id: terminalId } });
+    lastTicketId = r.ticket.id;
+    const t = r.ticket;
+    document.getElementById('tsvc').textContent = t.service_name;
+    document.getElementById('tnum').textContent = t.ticket_number;
+    document.getElementById('tinfo').textContent = t.ahead === 0 ? 'Vous êtes le prochain' : `Personnes devant vous : ${t.ahead}`;
+    document.getElementById('tqr').src = '/api/public/qr/' + t.access_token;
+    const p = document.getElementById('tprint');
+    p.textContent = r.print.status === 'failed' ? 'Impression impossible : notez votre numéro ou demandez de l’aide.'
+      : r.print.status === 'none' ? '' : r.print.status === 'client' ? '' : 'Ticket imprimé.';
+    document.getElementById('reprint').style.display = r.print.status === 'failed' ? '' : 'none';
+    document.getElementById('ticket').style.display = 'flex';
+    clearTimeout(hideTimer);
+    hideTimer = setTimeout(() => { document.getElementById('ticket').style.display = 'none'; }, r.print.status === 'failed' ? 30000 : 8000);
+  } catch (err) {
+    say(err.code === 'service_closed' ? 'Ce service est fermé pour le moment.' : 'Service momentanément indisponible.');
+  } finally { busy = false; }
+};
+document.getElementById('reprint').onclick = async () => {
+  try {
+    const r = await Q.api(`/api/tickets/${lastTicketId}/reprint`, { method: 'POST', body: { terminal_id: terminalId } });
+    document.getElementById('tprint').textContent = r.print.status === 'printed' ? 'Ticket réimprimé.' : 'Impression toujours impossible.';
+  } catch { document.getElementById('tprint').textContent = 'Impression toujours impossible.'; }
+};
+document.getElementById('exit').onclick = () => Q.logout();
+Q.start(['borne', 'administrateur', 'superviseur'], load);
+</script></body></html>

@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Suivi de ticket</title>
+<meta name="theme-color" content="#1e5eff">
+<link rel="manifest" href="/ticket/manifest.webmanifest">
+<link rel="stylesheet" href="/shared/common.css">
+<style>
+  main{max-width:460px;margin:0 auto;padding:20px 16px 40px;text-align:center}
+  .org{color:var(--muted);margin:6px 0 18px}
+  .num{font-size:4.6rem;font-weight:800;letter-spacing:.04em;line-height:1;margin:.3rem 0}
+  .svc{display:inline-block;padding:.25em .8em;border-radius:99px;color:#fff;font-weight:600}
+  .badge{margin:1.2rem 0 .4rem;font-size:1.3rem;font-weight:700}
+  .badge.waiting{color:var(--muted)} .badge.soon{color:var(--warn)} .badge.called,.badge.serving{color:var(--ok)}
+  .badge.done,.badge.cancelled{color:var(--muted)}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:1rem}
+  .grid .card b{display:block;font-size:2rem} .grid .card span{color:var(--muted);font-size:.85rem}
+  .alert{background:var(--ok);color:#fff;border-radius:16px;padding:1rem;margin-top:1rem;font-size:1.15rem;font-weight:700}
+  .small{color:var(--muted);font-size:.8rem;margin-top:1.4rem}
+</style></head><body><main>
+  <div class="org" id="org">&nbsp;</div>
+  <div class="card" id="box"><p>Chargement…</p></div>
+  <p class="small" id="live">Mise à jour automatique · Wi-Fi de l'établissement requis</p>
+</main>
+<script src="/socket.io/socket.io.js"></script>
+<script>
+const token = location.pathname.split('/').pop();
+const LABEL = { waiting: 'En attente', soon: 'Bientôt appelé', called: 'Appelé', serving: 'En cours de traitement', done: 'Terminé', cancelled: 'Annulé' };
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+let last = null;
+async function load() {
+  try {
+    const r = await fetch('/api/public/ticket/' + encodeURIComponent(token));
+    if (!r.ok) { document.getElementById('box').innerHTML = '<p>Ticket introuvable.</p>'; return; }
+    const t = await r.json();
+    document.getElementById('org').textContent = t.org;
+    const active = ['waiting', 'soon'].includes(t.status);
+    document.getElementById('box').innerHTML = `
+      <span class="svc" style="background:${esc(t.color)}">${esc(t.service)}</span>
+      <div class="num">${esc(t.ticket_number)}</div>
+      <div class="badge ${esc(t.status)}">${LABEL[t.status]}</div>
+      ${t.status === 'called' ? `<div class="alert">Présentez-vous au guichet ${esc(t.counter)}</div>` : ''}
+      ${active ? `<div class="grid">
+        <div class="card"><b>${t.position}</b><span>Votre position</span></div>
+        <div class="card"><b>${t.ahead}</b><span>Personne(s) devant vous</span></div>
+        <div class="card" style="grid-column:1/-1"><b>~${t.estimate_minutes} min</b><span>Estimation du temps restant</span></div></div>` : ''}`;
+    if (last && last !== t.status && ['called', 'soon'].includes(t.status) && navigator.vibrate) navigator.vibrate([300, 150, 300]);
+    last = t.status;
+  } catch { document.getElementById('live').textContent = 'Connexion perdue… nouvelle tentative'; }
+}
+load();
+const s = io('/public');
+s.on('queue.updated', load);
+s.on('connect', () => { document.getElementById('live').textContent = 'Mise à jour en direct'; load(); });
+setInterval(load, 20000);
+</script></body></html>

@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Administration OMZA QUEUE</title>
+<link rel="stylesheet" href="/shared/common.css">
+<style>
+  main{max-width:1100px;margin:0 auto;padding:16px}
+  nav{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0} nav button.on{background:var(--brand);color:#fff}
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+  .kpis b{display:block;font-size:1.9rem} .kpis span{color:var(--muted);font-size:.85rem}
+  table{width:100%;border-collapse:collapse;font-size:.92rem} th,td{padding:.55em .6em;text-align:left;border-bottom:1px solid var(--line)}
+  th{color:var(--muted);font-weight:600} .scroll{overflow-x:auto} h2{margin:1.2rem 0 .5rem;font-size:1.1rem}
+  .row{display:flex;gap:8px;flex-wrap:wrap;align-items:end;margin:8px 0} .row>*{flex:1;min-width:130px} .row button{flex:0 0 auto}
+  .bar{height:10px;border-radius:5px;background:var(--brand)} .msg{color:var(--ok);min-height:1.3em}
+  section[hidden]{display:none}
+</style></head><body><main>
+  <div style="display:flex;justify-content:space-between;align-items:center"><h1 style="margin:0">Administration</h1>
+    <button class="secondary" onclick="Q.logout()">Déconnexion</button></div>
+  <nav id="tabs"></nav>
+
+  <section id="s-dashboard"><div class="kpis" id="kpis"></div>
+    <h2>Files d'attente</h2><div class="card scroll"><table id="queues"></table></div></section>
+
+  <section id="s-stats" hidden>
+    <div class="row"><select id="period"><option value="today">Aujourd'hui</option><option value="yesterday">Hier</option>
+      <option value="week">Cette semaine</option><option value="month">Ce mois</option><option value="custom">Période personnalisée</option></select>
+      <input type="date" id="from"><input type="date" id="to"><button id="csv" class="secondary">Export CSV</button></div>
+    <div class="kpis" id="skpis"></div>
+    <h2>Par service</h2><div class="card scroll"><table id="bysvc"></table></div>
+    <h2>Par guichet</h2><div class="card scroll"><table id="byctr"></table></div>
+    <h2>Par agent</h2><div class="card scroll"><table id="byagent"></table></div>
+    <h2>Affluence par heure</h2><div class="card" id="hours"></div></section>
+
+  <section id="s-config" hidden>
+    <h2>Services</h2><div class="card scroll"><table id="svcs"></table></div>
+    <div class="card" style="margin-top:10px"><b>Nouveau service</b><div class="row">
+      <input id="ns-name" placeholder="Nom"><input id="ns-code" placeholder="Code (A, B…)" maxlength="4">
+      <input id="ns-color" type="color" value="#1e88e5"><button id="ns-add">Ajouter</button></div><div class="msg" id="ns-msg"></div></div>
+    <h2>Guichets</h2><div class="card scroll"><table id="ctrs"></table></div>
+    <h2>Utilisateurs</h2><div class="card scroll"><table id="users"></table></div>
+    <h2>Numérotation</h2><div class="card"><button class="danger" id="reset">Remettre les compteurs à zéro</button> <span class="msg" id="reset-msg"></span></div>
+  </section>
+
+  <section id="s-history" hidden><div class="card scroll"><table id="tickets"></table></div></section>
+  <section id="s-audit" hidden><div class="card scroll"><table id="audit"></table></div></section>
+</main>
+<script src="/socket.io/socket.io.js"></script>
+<script src="/shared/common.js"></script>
+<script>
+const $ = (id) => document.getElementById(id), E = Q.esc;
+const STATUS = { waiting: 'En attente', called: 'Appelé', serving: 'En cours', done: 'Terminé', absent: 'Absent', cancelled: 'Annulé' };
+const tbl = (el, head, rows) => { $(el).innerHTML = `<tr>${head.map((h) => `<th>${h}</th>`).join('')}</tr>` + rows.map((r) => `<tr>${r.map((c) => `<td>${c}</td>`).join('')}</tr>`).join(''); };
+const TABS = [['dashboard', 'Tableau de bord'], ['stats', 'Statistiques'], ['config', 'Configuration'], ['history', 'Historique'], ['audit', 'Journal']];
+let me, tab = 'dashboard';
+
+function go(t) {
+  tab = t;
+  TABS.forEach(([k]) => { $('s-' + k).hidden = k !== t; });
+  $('tabs').innerHTML = TABS.filter(([k]) => me.role === 'responsable' ? ['dashboard', 'stats'].includes(k) : k !== 'audit' || me.role === 'administrateur').map(([k, l]) => `<button class="secondary ${k === t ? 'on' : ''}" data-t="${k}">${l}</button>`).join('');
+  ({ dashboard: loadDashboard, stats: loadStats, config: loadConfig, history: loadHistory, audit: loadAudit }[t])();
+}
+$('tabs').onclick = (e) => e.target.dataset.t && go(e.target.dataset.t);
+
+async function loadDashboard() {
+  const d = await Q.api('/api/dashboard');
+  const c = d.connected || {};
+  $('kpis').innerHTML = [
+    ['Services actifs', d.active_services], ['Guichets ouverts', d.open_counters], ['Guichets en pause', d.paused_counters],
+    ['Agents connectés', c.agent || 0], ['Écrans connectés', c.affichage || 0], ['Bornes connectées', c.borne || 0],
+    ['Tickets en attente', d.tickets_waiting], ['Tickets appelés', d.tickets_called], ['Terminés aujourd’hui', d.tickets_done_today],
+  ].map(([l, v]) => `<div class="card"><b>${v}</b><span>${l}</span></div>`).join('');
+  tbl('queues', ['Service', 'En attente'], d.services.map((s) => [`${E(s.code)} · ${E(s.name)}`, s.waiting]));
+}
+async function loadStats() {
+  const p = $('period').value;
+  const qs = p === 'custom' ? `&from=${$('from').value}&to=${$('to').value}` : '';
+  if (p === 'custom' && (!$('from').value || !$('to').value)) return;
+  const s = await Q.api(`/api/stats/summary?period=${p}${qs}`), t = s.totals;
+  $('skpis').innerHTML = [['Tickets', t.total], ['Servis', t.served], ['Absents', t.absent], ['Annulés', t.cancelled],
+    ['Attente moyenne', Q.fmtSec(t.avg_wait_s)], ['Traitement moyen', Q.fmtSec(t.avg_handling_s)]]
+    .map(([l, v]) => `<div class="card"><b>${v}</b><span>${l}</span></div>`).join('');
+  tbl('bysvc', ['Service', 'Tickets', 'Servis', 'Attente moy.', 'Traitement moy.'],
+    s.by_service.map((x) => [E(x.name), x.total, x.served, Q.fmtSec(x.avg_wait_s), Q.fmtSec(x.avg_handling_s)]));
+  tbl('byctr', ['Guichet', 'Servis', 'Absents', 'Traitement moy.'], s.by_counter.map((x) => [E(x.name), x.served, x.absent, Q.fmtSec(x.avg_handling_s)]));
+  tbl('byagent', ['Agent', 'Servis'], s.by_agent.map((x) => [E(x.name), x.served]));
+  const max = Math.max(1, ...s.by_hour.map((h) => h.tickets));
+  $('hours').innerHTML = s.by_hour.map((h) => `<div style="display:flex;gap:8px;align-items:center;margin:3px 0"><span style="width:3.2em">${h.hour} h</span>
+    <div class="bar" style="width:${Math.round(h.tickets / max * 100)}%"></div><span>${h.tickets}</span></div>`).join('') || '<span style="color:var(--muted)">Aucune donnée</span>';
+}
+['period', 'from', 'to'].forEach((id) => $(id).onchange = loadStats);
+$('csv').onclick = async () => {
+  const p = $('period').value, qs = p === 'custom' ? `&from=${$('from').value}&to=${$('to').value}` : '';
+  const r = await fetch(`/api/stats/export.csv?period=${p}${qs}`, { headers: { authorization: 'Bearer ' + localStorage.getItem('omza_queue_token') } });
+  const a = document.createElement('a'); a.href = URL.createObjectURL(await r.blob()); a.download = `omza-queue-${p}.csv`; a.click();
+};
+async function loadConfig() {
+  const [svcs, ctrs, users] = await Promise.all([Q.api('/api/services'), Q.api('/api/counters'), Q.api('/api/users')]);
+  tbl('svcs', ['Code', 'Nom', 'Couleur', 'Priorité', 'Horaires', 'Actif'], svcs.map((s) => [E(s.code), E(s.name),
+    `<span style="display:inline-block;width:1em;height:1em;border-radius:3px;background:${E(s.color)}"></span>`, s.priority,
+    s.open_time ? `${E(s.open_time.slice(0, 5))}–${E(s.close_time.slice(0, 5))}` : '24 h', s.active ? 'oui' : 'non']));
+  tbl('ctrs', ['N°', 'Nom', 'État', 'Services'], ctrs.map((k) => [k.number, E(k.name), E(k.status),
+    k.service_ids.map((id) => E((svcs.find((s) => s.id === id) || {}).code || '?')).join(', ')]));
+  tbl('users', ['Nom', 'Identifiant', 'Rôle', 'Statut', 'Guichet'], users.map((u) => [E(u.name), E(u.username), E(u.role), E(u.status),
+    u.counter_id ? E((ctrs.find((k) => k.id === u.counter_id) || {}).name || '') : '']));
+}
+$('ns-add').onclick = async () => {
+  try {
+    await Q.api('/api/services', { body: { name: $('ns-name').value, code: $('ns-code').value, color: $('ns-color').value } });
+    $('ns-msg').textContent = 'Service ajouté.'; $('ns-name').value = $('ns-code').value = ''; loadConfig();
+  } catch (e) { $('ns-msg').textContent = e.code === 'already_exists' ? 'Ce code existe déjà.' : 'Données invalides.'; }
+};
+$('reset').onclick = async () => {
+  if (!confirm('Remettre tous les compteurs de tickets à zéro ? Les tickets en attente conservent leur numéro.')) return;
+  await Q.api('/api/admin/reset-numbering', { method: 'POST', body: {} }); $('reset-msg').textContent = 'Compteurs remis à zéro.';
+};
+async function loadHistory() {
+  const r = await Q.api('/api/tickets?limit=200');
+  tbl('tickets', ['N°', 'Service', 'Statut', 'Priorité', 'Guichet', 'Créé', 'Appelé'], r.map((t) => [E(t.ticket_number), E(t.service),
+    STATUS[t.status], t.priority, t.counter ?? '', new Date(t.created_at).toLocaleString('fr-FR'), t.called_at ? new Date(t.called_at).toLocaleTimeString('fr-FR') : '']));
+}
+async function loadAudit() {
+  const r = await Q.api('/api/audit?limit=200');
+  tbl('audit', ['Date', 'Utilisateur', 'Action', 'Détails'], r.map((a) => [new Date(a.created_at).toLocaleString('fr-FR'), E(a.username || ''), E(a.action), E(JSON.stringify(a.details || ''))]));
+}
+Q.start(['administrateur', 'superviseur', 'responsable'], (u) => {
+  me = u; go('dashboard');
+  const s = Q.socket(); let t;
+  ['queue.updated', 'counter.paused', 'counter.resumed'].forEach((e) => s.on(e, () => { clearTimeout(t); t = setTimeout(() => tab === 'dashboard' && loadDashboard(), 300); }));
+});
+</script></body></html>
