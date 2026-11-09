@@ -23,6 +23,7 @@ dependencies:
   qr: ^3.0.3
   crypto: ^3.0.8
   sqflite_common: ^2.5.15
+  print_bluetooth_thermal: ^1.2.5
 
 dev_dependencies:
   flutter_test:

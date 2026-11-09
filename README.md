@@ -94,6 +94,16 @@ Les codes d'accès des appareils (`admin`, `agent1`, `borne1`, `tv1`) sont gén�
 **3. Borne ou poste agent relié à un serveur** (PC Windows ou autre téléphone) : adresse du serveur,
 identifiant, mot de passe. Un compte `borne` ouvre la distribution de tickets, un compte `agent` le guichet.
 
+### Impression des tickets (Bluetooth)
+
+Pour imprimer le ticket du visiteur avec coupe automatique : jumelez l'imprimante thermique (58 ou 80 mm)
+dans *Réglages Android → Bluetooth* (code 0000 ou 1234), puis dans l'application *Réglages → Imprimante de
+tickets* : choisir l'imprimante, largeur du papier, coupe automatique (à désactiver si l'imprimante n'a pas de
+couteau : le papier avance alors pour être arraché), puis *Imprimer un ticket test*. Le ticket s'affiche tout de
+suite à l'écran ; si l'impression échoue, un bouton *Réimprimer* apparaît (même numéro, aucune nouvelle
+numérotation, réimpression tracée). Sur une borne reliée à un serveur, le menu du cadenas (en bas à droite)
+donne accès au même réglage. Le ticket contient le QR de suivi quand le partage est actif.
+
 ### Compilation de l'APK
 
 GitHub Actions (`.github/workflows/android-apk.yml`) analyse, teste et compile : onglet *Actions* → dernier
@@ -104,7 +114,9 @@ L'APK est signé avec la clé de debug : une clé de production sera nécessaire
 
 ### Limites connues
 
-- Pas d'impression de ticket depuis le téléphone (ni USB ni Bluetooth) : en mode seul, le ticket s'affiche à l'écran.
+- Impression : uniquement en Bluetooth (imprimante thermique classique « SPP »). Pas d'impression USB depuis
+  le téléphone. Un téléphone qui sert de serveur n'imprime que sur sa propre imprimante : les tickets pris sur
+  une autre borne s'impriment sur l'imprimante de cette borne.
 - Quand le téléphone sert d'autres appareils, Android peut suspendre l'application si elle passe en arrière-plan :
   gardez-la ouverte (l'écran reste allumé automatiquement tant que le partage est actif) et désactivez
   l'optimisation de batterie pour OMZA QUEUE. Un service Android permanent reste à faire.

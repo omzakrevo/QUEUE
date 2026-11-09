@@ -248,6 +248,9 @@ class QueueEngine {
         'ticket_id': ticketId, 'event_type': type, 'user_id': userId, 'created_at': _ms, 'details': details,
       });
 
+  /// Trace un événement sur un ticket (ex. réimpression).
+  Future<void> noteEvent(int ticketId, String type, {int? userId}) => _log(db, ticketId, type, userId);
+
   Future<Json> snapshot(int ticketId) async {
     final r = await db.rawQuery(
         'select t.*, s.name service_name, s.code service_code, s.color service_color, k.number counter_number, k.name counter_name '

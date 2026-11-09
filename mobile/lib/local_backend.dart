@@ -2,14 +2,16 @@ import 'dart:async';
 
 import 'backend.dart';
 import 'core/engine.dart';
+import 'printer.dart';
 
 /// Backend branché directement sur le moteur embarqué : aucun réseau, aucun serveur.
 class LocalBackend implements Backend {
-  LocalBackend(this.engine, this.counterId, {this.qrBase}) {
+  LocalBackend(this.engine, this.counterId, {this.qrBase, this.printer}) {
     _sub = engine.events.listen((_) => _changes.add(null));
   }
   final QueueEngine engine;
   final int counterId;
+  final PrinterService? printer;
 
   /// Adresse (http://ip:port) à mettre dans le QR du ticket, si le partage est activé.
   final String? Function()? qrBase;
@@ -29,11 +31,28 @@ class LocalBackend implements Backend {
   Future<TicketResult> createTicket(int serviceId) async {
     final t = Map<String, dynamic>.from(await engine.createTicket(serviceId));
     final base = qrBase?.call();
-    return TicketResult(t, qrUrl: base == null ? null : '$base/t/${t['access_token']}');
+    final qr = base == null ? null : '$base/t/${t['access_token']}';
+    return TicketResult(t, qrUrl: qr, printing: printer == null ? null : _print(t, qr));
+  }
+
+  Future<String> _print(Js ticket, String? qr) async {
+    try {
+      final cfg = await engine.settings();
+      return await printer!.printTicket(jobFromTicket(ticket, org: cfg['org_name']!, message: cfg['ticket_message']!, qrUrl: qr));
+    } catch (_) {
+      return 'failed';
+    }
   }
 
   @override
-  Future<void> reprint(int ticketId) async {}
+  Future<void> reprint(int ticketId) async {
+    if (printer == null) return;
+    final t = Map<String, dynamic>.from(await engine.snapshot(ticketId));
+    await engine.noteEvent(ticketId, 'reprinted');
+    final base = qrBase?.call();
+    final status = await _print(t, base == null ? null : '$base/t/${t['access_token']}');
+    if (status == 'failed') throw EngineException('print_failed', 500);
+  }
 
   @override
   Future<Js> agentState() async => Map<String, dynamic>.from(await engine.agentState(counterId));

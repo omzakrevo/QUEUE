@@ -5,6 +5,7 @@ import 'package:qr_flutter/qr_flutter.dart';
 import 'core/engine.dart';
 import 'kiosk_screen.dart' show parseColor;
 import 'local_host.dart';
+import 'printer_settings_screen.dart';
 
 const _palette = ['#1e88e5', '#43a047', '#e53935', '#8e24aa', '#fb8c00', '#00897b', '#6d4c41', '#546e7a'];
 
@@ -130,6 +131,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
             onTap: () => _editService(s),
           ),
         Align(alignment: Alignment.centerLeft, child: TextButton.icon(onPressed: _editService, icon: const Icon(Icons.add), label: const Text('Ajouter un service'))),
+        _title('Impression'),
+        ListTile(
+          leading: const Icon(Icons.print_outlined),
+          title: const Text('Imprimante de tickets (Bluetooth)'),
+          subtitle: const Text('Imprimer le ticket du visiteur, avec coupe automatique'),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => PrinterSettingsScreen(printer: h.printer))),
+        ),
         _title('Annonces vocales'),
         SwitchListTile(
             title: const Text('Annoncer les appels à voix haute'),

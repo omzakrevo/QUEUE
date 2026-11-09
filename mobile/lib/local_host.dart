@@ -15,19 +15,21 @@ import 'core/auth.dart';
 import 'core/engine.dart';
 import 'core/server.dart';
 import 'local_backend.dart';
+import 'printer.dart';
 
 /// Ce téléphone : moteur de files + voix + (en option) serveur pour les autres appareils.
 class LocalHost extends ChangeNotifier {
-  LocalHost._(this.engine, this.auth, this.counterId) {
+  LocalHost._(this.engine, this.auth, this.counterId, this.printer) {
     server = LocalServer(engine, auth, _loadAsset, port: port);
     announcer = Announcer(engine);
-    backend = LocalBackend(engine, counterId, qrBase: () => sharing && addresses.isNotEmpty ? addresses.first : null);
+    backend = LocalBackend(engine, counterId, printer: printer, qrBase: () => sharing && addresses.isNotEmpty ? addresses.first : null);
   }
 
   static const port = 3000;
   final QueueEngine engine;
   final Auth auth;
   final int counterId;
+  final PrinterService printer;
   late final LocalServer server;
   late final Announcer announcer;
   late final LocalBackend backend;
@@ -39,7 +41,7 @@ class LocalHost extends ChangeNotifier {
   /// Codes d'accès générés, affichés une seule fois (seuls les hachages sont conservés).
   Map<String, String>? newCodes;
 
-  static Future<LocalHost> open() async {
+  static Future<LocalHost> open(PrinterService printer) async {
     final dir = await getApplicationSupportDirectory();
     await dir.create(recursive: true);
     final path = p.join(dir.path, 'omza_queue.db');
@@ -53,7 +55,7 @@ class LocalHost extends ChangeNotifier {
     // Utilisation seule : le guichet est ouvert d'office pour que l'appel fonctionne tout de suite.
     final counter = await engine.firstCounterId();
     await engine.setCounterStatus(counter, 'open');
-    final h = LocalHost._(engine, Auth(engine), counter);
+    final h = LocalHost._(engine, Auth(engine), counter, printer);
     final prefs = await SharedPreferences.getInstance();
     if (prefs.getBool('share') ?? false) await h.setSharing(true);
     return h;

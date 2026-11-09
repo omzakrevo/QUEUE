@@ -8,6 +8,7 @@ import 'kiosk_screen.dart';
 import 'local_host.dart';
 import 'login_screen.dart';
 import 'mode_screen.dart';
+import 'printer.dart';
 import 'solo_home.dart';
 
 void main() => runApp(const OmzaQueueApp());
@@ -39,6 +40,7 @@ class _RootState extends State<Root> {
   Session? _session;
   RemoteBackend? _remote;
   String? _fatal;
+  final _printer = PrinterService(BluetoothTransport());
 
   @override
   void initState() {
@@ -59,7 +61,7 @@ class _RootState extends State<Root> {
 
   Future<void> _openLocal() async {
     try {
-      _host = await LocalHost.open();
+      _host = await LocalHost.open(_printer);
       _mode = 'local';
     } catch (e) {
       _fatal = 'Impossible d’ouvrir la base de données locale : $e';
@@ -76,7 +78,7 @@ class _RootState extends State<Root> {
     _remote?.dispose();
     _remote = null;
     _session = s;
-    if (s != null) _remote = RemoteBackend(Api(s));
+    if (s != null) _remote = RemoteBackend(Api(s), printer: _printer);
   }
 
   Future<void> _choose(String mode) async {
@@ -123,7 +125,7 @@ class _RootState extends State<Root> {
     }
     switch (s.role) {
       case 'borne':
-        return KioskScreen(backend: _remote!, onLogout: _logout);
+        return KioskScreen(backend: _remote!, onLogout: _logout, printer: _printer);
       case 'agent':
       case 'superviseur':
       case 'administrateur':

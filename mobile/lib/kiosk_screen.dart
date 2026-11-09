@@ -6,6 +6,8 @@ import 'package:qr_flutter/qr_flutter.dart';
 
 import 'api.dart';
 import 'backend.dart';
+import 'printer.dart';
+import 'printer_settings_screen.dart';
 
 Color parseColor(String? hex) {
   final h = (hex ?? '').replaceFirst('#', '');
@@ -16,10 +18,11 @@ Color parseColor(String? hex) {
 /// Borne : une grande touche par service, ticket affiché (avec QR de suivi si disponible).
 /// [embedded] : intégrée à l'application autonome (pas de plein écran, pas de bouton de sortie).
 class KioskScreen extends StatefulWidget {
-  const KioskScreen({super.key, required this.backend, this.onLogout, this.embedded = false});
+  const KioskScreen({super.key, required this.backend, this.onLogout, this.embedded = false, this.printer});
   final Backend backend;
   final Future<void> Function()? onLogout;
   final bool embedded;
+  final PrinterService? printer;
   @override
   State<KioskScreen> createState() => _KioskScreenState();
 }
@@ -86,10 +89,14 @@ class _KioskScreenState extends State<KioskScreen> {
       final r = await widget.backend.createTicket(service['id'] as int);
       setState(() {
         _result = r;
-        _printStatus = r.printStatus;
+        _printStatus = r.printing != null ? 'printing' : r.printStatus;
       });
-      _hide?.cancel();
-      _hide = Timer(Duration(seconds: _printStatus == 'failed' ? 30 : 10), () => setState(() => _result = null));
+      _scheduleHide();
+      r.printing?.then((s) {
+        if (!mounted || _result != r) return;
+        setState(() => _printStatus = s);
+        _scheduleHide(); // plus de temps pour réagir si l'impression a échoué
+      });
     } catch (e) {
       setState(() => _error = errorText(e));
     } finally {
@@ -97,7 +104,13 @@ class _KioskScreenState extends State<KioskScreen> {
     }
   }
 
+  void _scheduleHide() {
+    _hide?.cancel();
+    _hide = Timer(Duration(seconds: _printStatus == 'failed' ? 30 : 10), () => setState(() => _result = null));
+  }
+
   Future<void> _reprint() async {
+    setState(() => _printStatus = 'printing');
     try {
       await widget.backend.reprint(_result!.ticket['id'] as int);
       setState(() => _printStatus = 'printed');
@@ -106,17 +119,30 @@ class _KioskScreenState extends State<KioskScreen> {
     }
   }
 
-  Future<void> _exit() async {
-    final ok = await showDialog<bool>(
+  Future<void> _menu() async {
+    final choice = await showModalBottomSheet<String>(
         context: context,
-        builder: (c) => AlertDialog(
-              title: const Text('Quitter le mode borne ?'),
-              actions: [
-                TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Annuler')),
-                FilledButton(onPressed: () => Navigator.pop(c, true), child: const Text('Déconnecter')),
-              ],
-            ));
-    if (ok == true) await widget.onLogout!();
+        builder: (c) => SafeArea(
+                child: Column(mainAxisSize: MainAxisSize.min, children: [
+              if (widget.printer != null)
+                ListTile(leading: const Icon(Icons.print_outlined), title: const Text('Imprimante de tickets'), onTap: () => Navigator.pop(c, 'printer')),
+              ListTile(leading: const Icon(Icons.logout), title: const Text('Quitter le mode borne'), onTap: () => Navigator.pop(c, 'exit')),
+            ])));
+    if (!mounted) return;
+    if (choice == 'printer') {
+      await Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => PrinterSettingsScreen(printer: widget.printer!)));
+    } else if (choice == 'exit') {
+      final ok = await showDialog<bool>(
+          context: context,
+          builder: (c) => AlertDialog(
+                title: const Text('Quitter le mode borne ?'),
+                actions: [
+                  TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Annuler')),
+                  FilledButton(onPressed: () => Navigator.pop(c, true), child: const Text('Déconnecter')),
+                ],
+              ));
+      if (ok == true) await widget.onLogout!();
+    }
   }
 
   @override
@@ -175,7 +201,7 @@ class _KioskScreenState extends State<KioskScreen> {
             Positioned(
                 right: 0,
                 bottom: 0,
-                child: IconButton(onPressed: _exit, icon: const Icon(Icons.lock_outline, size: 18), color: Colors.grey.withValues(alpha: .4))),
+                child: IconButton(onPressed: _menu, icon: const Icon(Icons.lock_outline, size: 18), color: Colors.grey.withValues(alpha: .4))),
           if (t != null)
             Positioned.fill(
               child: ColoredBox(
@@ -195,6 +221,8 @@ class _KioskScreenState extends State<KioskScreen> {
                         const Text('Scannez pour suivre votre attente (Wi-Fi de l’établissement)'),
                       ] else
                         const Padding(padding: EdgeInsets.only(top: 12), child: Text('Gardez votre numéro et attendez l’appel.')),
+                      if (_printStatus == 'printing') const Padding(padding: EdgeInsets.only(top: 12), child: Text('Impression en cours…')),
+                      if (_printStatus == 'printed') const Padding(padding: EdgeInsets.only(top: 12), child: Text('Ticket imprimé.')),
                       if (_printStatus == 'failed') ...[
                         const SizedBox(height: 12),
                         const Text('Impression impossible : notez votre numéro ou demandez de l’aide.',

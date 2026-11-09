@@ -1,15 +1,18 @@
 import 'dart:async';
 
 import 'api.dart';
+import 'printer.dart';
 
 typedef Js = Map<String, dynamic>;
 
 /// Résultat de la création d'un ticket.
 class TicketResult {
-  TicketResult(this.ticket, {this.qrUrl, this.printStatus = 'none'});
+  TicketResult(this.ticket, {this.qrUrl, this.printStatus = 'none', this.printing});
   final Js ticket;
   final String? qrUrl;
   final String printStatus; // none | printed | failed | client
+  /// Impression locale en cours : se termine par 'printed' | 'failed' | 'none'. Le ticket s'affiche sans l'attendre.
+  final Future<String>? printing;
 }
 
 /// Ce que les écrans borne/agent utilisent. Deux implémentations : [RemoteBackend] (serveur sur le
@@ -30,7 +33,7 @@ abstract class Backend {
 }
 
 class RemoteBackend implements Backend {
-  RemoteBackend(this.api) {
+  RemoteBackend(this.api, {this.printer}) {
     _socket = api.socket()
       ..on('queue.updated', (_) => _ping())
       ..on('ticket.created', (_) => _ping())
@@ -39,6 +42,8 @@ class RemoteBackend implements Backend {
     _poll = Timer.periodic(const Duration(seconds: 4), (_) => _ping());
   }
   final Api api;
+  final PrinterService? printer;
+  final _recent = <int, TicketResult>{};
   dynamic _socket;
   Timer? _poll;
   final _changes = StreamController<void>.broadcast();
@@ -62,15 +67,34 @@ class RemoteBackend implements Backend {
       'service_id': serviceId,
       if (api.session.terminalId != null) 'terminal_id': api.session.terminalId,
     }) as Map;
-    return TicketResult(Map<String, dynamic>.from(r['ticket'] as Map),
-        qrUrl: r['qr_url'] as String?, printStatus: (r['print'] as Map)['status'] as String);
+    final ticket = Map<String, dynamic>.from(r['ticket'] as Map);
+    final qr = r['qr_url'] as String?;
+    final serverStatus = (r['print'] as Map)['status'] as String;
+    // Si le serveur n'a pas déjà imprimé (imprimante réseau), on imprime sur l'imprimante de cet appareil.
+    final printing = (printer == null || serverStatus == 'printed') ? null : _localPrint(ticket, qr);
+    final res = TicketResult(ticket, qrUrl: qr, printStatus: serverStatus, printing: printing);
+    _recent[ticket['id'] as int] = res;
+    if (_recent.length > 20) _recent.remove(_recent.keys.first);
+    return res;
+  }
+
+  Future<String> _localPrint(Js ticket, String? qr) async {
+    try {
+      final cfg = await settings();
+      return await printer!.printTicket(jobFromTicket(ticket, org: '${cfg['org_name']}', message: '${cfg['ticket_message'] ?? ''}', qrUrl: qr));
+    } catch (_) {
+      return 'failed';
+    }
   }
 
   @override
   Future<void> reprint(int ticketId) async {
     final r = await api.post('/tickets/$ticketId/reprint',
         {if (api.session.terminalId != null) 'terminal_id': api.session.terminalId}) as Map;
-    if ((r['print'] as Map)['status'] == 'failed') throw ApiException(0, 'print_failed');
+    var status = (r['print'] as Map)['status'] as String;
+    final known = _recent[ticketId];
+    if (status != 'printed' && printer != null && known != null) status = await _localPrint(known.ticket, known.qrUrl);
+    if (status == 'failed') throw ApiException(0, 'print_failed');
   }
 
   @override
