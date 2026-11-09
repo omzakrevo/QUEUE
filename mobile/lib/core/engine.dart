@@ -222,10 +222,12 @@ class QueueEngine {
           if (s.isEmpty) throw EngineException('service_not_found', 404);
           if (s.first['active'] != 1) throw EngineException('service_inactive');
           final scope = await _scopeKey(t);
+          // Syntaxe compatible avec les SQLite anciens d'Android (pas d'UPSERT « ON CONFLICT »).
+          // Sûr sans doublon : tout se passe dans une transaction, sous le verrou du moteur.
           await t.rawInsert(
-              'insert into ticket_counters(service_id, scope_key, last_number) values (?,?,1) '
-              'on conflict(service_id, scope_key) do update set last_number = last_number + 1',
-              [serviceId, scope]);
+              'insert or ignore into ticket_counters(service_id, scope_key, last_number) values (?,?,0)', [serviceId, scope]);
+          await t.rawUpdate(
+              'update ticket_counters set last_number = last_number + 1 where service_id=? and scope_key=?', [serviceId, scope]);
           final seq = firstIntValue(await t.rawQuery(
               'select last_number from ticket_counters where service_id=? and scope_key=?', [serviceId, scope]))!;
           final now = _ms;
