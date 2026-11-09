@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Poste agent OMZA QUEUE</title>
+<link rel="stylesheet" href="/shared/common.css">
+<style>
+  main{max-width:900px;margin:0 auto;padding:16px}
+  .top{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
+  .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:14px 0}
+  .stats .card{text-align:center;padding:.8rem} .stats b{display:block;font-size:1.8rem} .stats span{color:var(--muted);font-size:.8rem}
+  #next{width:100%;font-size:clamp(1.6rem,5vw,2.6rem);padding:1.1em;border-radius:20px;background:var(--ok);box-shadow:0 6px 18px #1f9d5555}
+  .cur{text-align:center;margin:16px 0} .cur .n{font-size:clamp(4rem,14vw,8rem);font-weight:800;line-height:1}
+  .cur .m{color:var(--muted)} .actions{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+  .actions button{padding:1em}
+  #err{color:var(--bad);min-height:1.3em;margin:8px 0;text-align:center}
+  dialog{border:0;border-radius:16px;padding:1.2rem;background:var(--card);color:var(--ink)} dialog::backdrop{background:#0008}
+  dialog button{margin:4px}
+  .badge{display:inline-block;padding:.2em .7em;border-radius:99px;font-weight:600;font-size:.85rem;color:#fff}
+  .open{background:var(--ok)} .paused{background:var(--warn)} .closed{background:var(--muted)}
+</style></head><body><main>
+  <div class="top"><div><b id="who"></b> · <span id="counter"></span> <span class="badge closed" id="cstate">fermé</span></div>
+    <div><button class="secondary" id="pause">Pause</button> <button class="secondary" id="close">Fermer le guichet</button>
+    <button class="secondary" onclick="Q.logout()">Déconnexion</button></div></div>
+  <div class="stats"><div class="card"><b id="waiting">0</b><span>En attente</span></div>
+    <div class="card"><b id="served">0</b><span>Servis aujourd'hui</span></div>
+    <div class="card"><b id="avg">—</b><span>Temps moyen</span></div></div>
+  <button id="next">APPELER LE SUIVANT</button>
+  <div class="cur" id="cur"></div>
+  <div id="err"></div>
+  <div class="actions" id="actions"></div>
+  <dialog id="dlg"><b>Transférer vers :</b><div id="svcs" style="margin-top:8px"></div><button class="secondary" onclick="dlg.close()">Annuler</button></dialog>
+</main>
+<script src="/socket.io/socket.io.js"></script>
+<script src="/shared/common.js"></script>
+<script>
+const ERR = { queue_empty: 'Aucun client en attente.', counter_paused: 'Le guichet est en pause.', counter_closed: 'Le guichet est fermé.',
+  ticket_in_progress: 'Terminez d’abord le client en cours.', no_counter_assigned: 'Aucun guichet n’est affecté à ce compte.' };
+const $ = (id) => document.getElementById(id);
+let st = null;
+const show = (e) => { $('err').textContent = e ? (ERR[e.code] || 'Action impossible (' + e.message + ').') : ''; };
+async function act(path, body) { try { show(); st = await Q.api(path, { method: 'POST', body: body || {} }); } catch (e) { show(e); } await refresh(); }
+async function refresh() {
+  try { st = await Q.api('/api/agent/state'); } catch (e) { return show(e); }
+  const k = st.counter, t = st.current;
+  $('counter').textContent = k.name; $('cstate').className = 'badge ' + k.status;
+  $('cstate').textContent = { open: 'ouvert', paused: 'en pause', closed: 'fermé' }[k.status];
+  $('waiting').textContent = st.waiting; $('served').textContent = st.served; $('avg').textContent = Q.fmtSec(st.avg_handling_seconds);
+  $('pause').textContent = k.status === 'paused' ? 'Reprendre' : 'Pause';
+  $('pause').disabled = k.status === 'closed'; $('close').disabled = k.status === 'closed' || !!t;
+  $('next').disabled = !!t || k.status !== 'open';
+  $('cur').innerHTML = t ? `<div class="m">${Q.esc(t.service_name)} · ${t.status === 'serving' ? 'en cours de traitement' : 'appelé'}</div><div class="n">${Q.esc(t.ticket_number)}</div>`
+    : `<div class="m">${k.status === 'open' ? 'Aucun client en cours' : 'Ouvrez le guichet pour commencer'}</div>`;
+  $('actions').innerHTML = k.status === 'closed' ? '<button class="ok" data-a="open">Ouvrir le guichet</button>' : t ? `
+    <button class="secondary" data-a="recall">Rappeler</button>
+    ${t.status === 'called' ? '<button class="secondary" data-a="start">Début du traitement</button>' : ''}
+    <button class="ok" data-a="complete">Terminer</button>
+    ${t.status === 'called' ? '<button class="danger" data-a="absent">Absent</button><button class="secondary" data-a="skip">Ignorer</button>' : ''}
+    <button class="secondary" data-a="transfer">Transférer</button>` : '';
+}
+$('next').onclick = () => act('/api/agent/call-next');
+$('pause').onclick = () => act('/api/agent/counter/' + (st.counter.status === 'paused' ? 'resume' : 'pause'));
+$('close').onclick = () => act('/api/agent/counter/close');
+$('actions').onclick = async (e) => {
+  const a = e.target.dataset.a; if (!a) return;
+  if (a === 'open') return act('/api/agent/counter/open');
+  if (a === 'transfer') {
+    const all = (await Q.api('/api/services')).filter((s) => s.active && s.id !== st.current.service_id);
+    $('svcs').innerHTML = all.map((s) => `<button data-s="${s.id}">${Q.esc(s.name)}</button>`).join('');
+    return $('dlg').showModal();
+  }
+  act(`/api/agent/tickets/${st.current.id}/${a}`);
+};
+$('svcs').onclick = (e) => { const s = e.target.dataset.s; if (!s) return; $('dlg').close(); act(`/api/agent/tickets/${st.current.id}/transfer`, { service_id: Number(s) }); };
+Q.start(['agent', 'administrateur', 'superviseur'], async (me) => {
+  $('who').textContent = me.name;
+  await refresh();
+  const sock = Q.socket();
+  ['queue.updated', 'ticket.created'].forEach((e) => sock.on(e, refresh));
+  sock.on('connect', refresh);
+});
+</script></body></html>

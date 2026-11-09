@@ -1,9 +1,14 @@
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'agent_screen.dart';
 import 'api.dart';
+import 'backend.dart';
 import 'kiosk_screen.dart';
+import 'local_host.dart';
 import 'login_screen.dart';
+import 'mode_screen.dart';
+import 'solo_home.dart';
 
 void main() => runApp(const OmzaQueueApp());
 
@@ -20,7 +25,7 @@ class OmzaQueueApp extends StatelessWidget {
       );
 }
 
-/// Choisit l'écran selon le rôle du compte : borne -> distribution, agent -> poste de guichet.
+/// Aiguillage : choix du mode (ce téléphone seul / connexion à un serveur), puis écran selon le rôle.
 class Root extends StatefulWidget {
   const Root({super.key});
   @override
@@ -28,36 +33,101 @@ class Root extends StatefulWidget {
 }
 
 class _RootState extends State<Root> {
-  Session? _session;
   bool _loading = true;
+  String? _mode; // local | remote
+  LocalHost? _host;
+  Session? _session;
+  RemoteBackend? _remote;
+  String? _fatal;
 
   @override
   void initState() {
     super.initState();
-    Api.restore().then((s) => setState(() {
-          _session = s;
-          _loading = false;
-        }));
+    _init();
+  }
+
+  Future<void> _init() async {
+    final prefs = await SharedPreferences.getInstance();
+    final mode = prefs.getString('mode');
+    if (mode == 'local') {
+      await _openLocal();
+    } else if (mode == 'remote') {
+      await _openRemote();
+    }
+    if (mounted) setState(() => _loading = false);
+  }
+
+  Future<void> _openLocal() async {
+    try {
+      _host = await LocalHost.open();
+      _mode = 'local';
+    } catch (e) {
+      _fatal = 'Impossible d’ouvrir la base de données locale : $e';
+    }
+  }
+
+  Future<void> _openRemote() async {
+    _mode = 'remote';
+    final s = await Api.restore();
+    _setSession(s);
+  }
+
+  void _setSession(Session? s) {
+    _remote?.dispose();
+    _remote = null;
+    _session = s;
+    if (s != null) _remote = RemoteBackend(Api(s));
+  }
+
+  Future<void> _choose(String mode) async {
+    await (await SharedPreferences.getInstance()).setString('mode', mode);
+    setState(() => _loading = true);
+    if (mode == 'local') {
+      await _openLocal();
+    } else {
+      await _openRemote();
+    }
+    if (mounted) setState(() => _loading = false);
+  }
+
+  Future<void> _resetMode() async {
+    await (await SharedPreferences.getInstance()).remove('mode');
+    _host?.dispose();
+    _host = null;
+    _setSession(null);
+    setState(() => _mode = null);
   }
 
   Future<void> _logout() async {
     await Api.logout();
-    setState(() => _session = null);
+    setState(() => _setSession(null));
+  }
+
+  @override
+  void dispose() {
+    _host?.dispose();
+    _remote?.dispose();
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     if (_loading) return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    if (_fatal != null) return Scaffold(body: Center(child: Padding(padding: const EdgeInsets.all(24), child: Text(_fatal!))));
+    if (_mode == null) return ModeScreen(onChoose: _choose);
+    if (_mode == 'local') return SoloHome(host: _host!, onResetMode: _resetMode);
+
     final s = _session;
-    if (s == null) return LoginScreen(onLogin: (x) => setState(() => _session = x));
-    final api = Api(s);
+    if (s == null) {
+      return LoginScreen(onLogin: (x) => setState(() => _setSession(x)), onBack: _resetMode);
+    }
     switch (s.role) {
       case 'borne':
-        return KioskScreen(api: api, onLogout: _logout);
+        return KioskScreen(backend: _remote!, onLogout: _logout);
       case 'agent':
       case 'superviseur':
       case 'administrateur':
-        return AgentScreen(api: api, onLogout: _logout);
+        return AgentScreen(backend: _remote!, userName: s.name, onLogout: _logout);
       default:
         return Scaffold(
           appBar: AppBar(title: const Text('OMZA QUEUE')),

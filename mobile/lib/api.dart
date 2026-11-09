@@ -126,7 +126,7 @@ class Api {
       sio.OptionBuilder()
           .setTransports(['websocket'])
           .setAuth({'token': session.token})
-          .enableReconnection()
+          .setReconnectionAttempts(5)
           .build());
 }
 

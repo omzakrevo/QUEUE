@@ -75,15 +75,44 @@ simulée), diffusion temps réel, conservation des données après redémarrage,
 
 ## Application Android / Windows (Flutter)
 
-Dossier `mobile/` : une seule application, deux modes selon le rôle du compte
-(`borne` → distribution des tickets plein écran avec QR ; `agent`/`superviseur`/`administrateur` →
-poste de guichet). À la première ouverture : adresse du serveur (ex. `192.168.1.10`), identifiant,
-mot de passe, et pour une borne le n° de terminal.
+Dossier `mobile/`. Au premier lancement, l'application propose deux façons de l'utiliser :
 
-L'APK est compilé par GitHub Actions (`.github/workflows/android-apk.yml`) : onglet *Actions* →
-dernier run → artefact `omza-queue-apk`. En local : `cd mobile && flutter build apk --release`
-(Android SDK requis). L'APK est signé avec la clé de debug : pour une diffusion commerciale, configurez
-une clé de signature de production.
+**1. Ce téléphone seul (sans PC, sans TV).** Le téléphone contient son propre moteur de files d'attente
+(SQLite) : les visiteurs prennent un ticket sur l'écran (onglet *Tickets*), l'agent appelle depuis le même
+téléphone (onglet *Guichet*), et **le téléphone annonce l'appel à voix haute** (synthèse vocale du
+système, sans Internet). L'onglet *Réglages* permet de gérer les services, la voix, les statistiques du
+jour et la remise à zéro des numéros. Tout fonctionne hors connexion.
 
-Limites actuelles : pas d'impression USB depuis l'application (impression réseau gérée par le serveur) ;
-l'application n'a été vérifiée que par `flutter analyze` et ses tests unitaires, pas encore sur un appareil.
+**2. Ce téléphone sert aussi de serveur.** Dans *Réglages → Partager ce téléphone*, activez le partage :
+le téléphone démarre un serveur (port 3000) avec la même API et les mêmes pages que le serveur Windows.
+Les visiteurs peuvent alors scanner le QR du ticket pour suivre leur place, un navigateur (TV, tablette)
+peut ouvrir `http://<adresse>:3000/tv`, `/kiosk` ou `/agent`, et d'autres téléphones peuvent se connecter
+avec l'application. Les appareils doivent être sur le même Wi-Fi (ou sur le point d'accès du téléphone).
+Les codes d'accès des appareils (`admin`, `agent1`, `borne1`, `tv1`) sont générés au premier partage et
+**affichés une seule fois** ; seuls leurs hachages sont conservés.
+
+**3. Borne ou poste agent relié à un serveur** (PC Windows ou autre téléphone) : adresse du serveur,
+identifiant, mot de passe. Un compte `borne` ouvre la distribution de tickets, un compte `agent` le guichet.
+
+### Compilation de l'APK
+
+GitHub Actions (`.github/workflows/android-apk.yml`) analyse, teste et compile : onglet *Actions* → dernier
+run → artefact `omza-queue-apk`. En local : `cd mobile && flutter build apk --release` (Android SDK requis).
+Les pages web embarquées (`mobile/assets/web`) sont une copie de `server/public` : après toute modification
+de ces pages, lancez `mobile/tool/sync_web.sh` (le workflow échoue si les deux divergent).
+L'APK est signé avec la clé de debug : une clé de production sera nécessaire pour le diffuser.
+
+### Limites connues
+
+- Pas d'impression de ticket depuis le téléphone (ni USB ni Bluetooth) : en mode seul, le ticket s'affiche à l'écran.
+- Quand le téléphone sert d'autres appareils, Android peut suspendre l'application si elle passe en arrière-plan :
+  gardez-la ouverte (l'écran reste allumé automatiquement tant que le partage est actif) et désactivez
+  l'optimisation de batterie pour OMZA QUEUE. Un service Android permanent reste à faire.
+- Le serveur du téléphone n'a pas la page d'administration, les horaires d'ouverture par service, les
+  exports ni les rôles « superviseur/responsable » du serveur Windows ; la configuration se fait dans
+  l'application.
+- Le temps réel des pages web servies par le téléphone repose sur une interrogation toutes les ~1,2 s
+  (pas de Socket.IO) : l'affichage TV et la page QR se rafraîchissent donc avec ce léger délai.
+- Vérifié automatiquement : moteur (concurrence, priorités, persistance), serveur embarqué, écrans, et
+  parcours complet borne → agent → TV → QR dans Chromium contre le serveur embarqué. **Non vérifié sur un
+  appareil Android réel** (voix, partage réseau, mise en veille) : à tester sur le téléphone.

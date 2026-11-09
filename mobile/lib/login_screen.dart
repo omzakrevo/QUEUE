@@ -4,8 +4,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'api.dart';
 
 class LoginScreen extends StatefulWidget {
-  const LoginScreen({super.key, required this.onLogin});
+  const LoginScreen({super.key, required this.onLogin, this.onBack});
   final void Function(Session) onLogin;
+  final Future<void> Function()? onBack;
   @override
   State<LoginScreen> createState() => _LoginScreenState();
 }
@@ -56,7 +57,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   controller: _server,
                   keyboardType: TextInputType.url,
                   decoration: const InputDecoration(
-                      labelText: 'Adresse du serveur', hintText: '192.168.1.10', border: OutlineInputBorder())),
+                      labelText: 'Adresse du serveur (PC ou autre téléphone)', hintText: '192.168.1.10', border: OutlineInputBorder())),
               const SizedBox(height: 12),
               TextField(
                   controller: _user,
@@ -86,6 +87,8 @@ class _LoginScreenState extends State<LoginScreen> {
                       child: _busy
                           ? const SizedBox(height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2))
                           : const Text('Se connecter'))),
+              if (widget.onBack != null)
+                TextButton(onPressed: widget.onBack, child: const Text('Changer de mode d\u2019utilisation')),
             ]),
           ),
         ),

@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="fr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Affichage OMZA QUEUE</title>
+<link rel="stylesheet" href="/shared/common.css">
+<style>
+  body{background:#0b1220;color:#fff;overflow:hidden;height:100vh}
+  :root{--card:#151f35;--line:#243250;--muted:#9fb0cf}
+  .tv{display:grid;grid-template-columns:2fr 1fr;grid-template-rows:auto 1fr auto;height:100vh;gap:1.2vh 1.5vw;padding:2vh 2vw}
+  header{grid-column:1/-1;display:flex;justify-content:space-between;align-items:center;font-size:3.4vh}
+  header .org{font-weight:700} #clock{font-variant-numeric:tabular-nums;color:var(--muted)}
+  .current{display:grid;gap:1.5vh;align-content:start;overflow:hidden}
+  .call{display:flex;align-items:center;justify-content:space-between;background:var(--card);border-left:1.4vw solid var(--c,#1e5eff);border-radius:2vh;padding:2vh 3vw}
+  .call .num{font-size:11vh;font-weight:800;letter-spacing:.05em;line-height:1}
+  .call .svc{font-size:3vh;color:var(--muted)} .call .gui{text-align:right;font-size:3.4vh;color:var(--muted)}
+  .call .gui b{display:block;font-size:11vh;line-height:1;color:#fff}
+  .call.flash{animation:flash 1s 4}
+  @keyframes flash{50%{background:#2b4a99}}
+  .side{background:var(--card);border-radius:2vh;padding:2vh 1.6vw;overflow:hidden}
+  .side h2{margin:0 0 1.2vh;font-size:2.6vh;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.08em}
+  .row{display:flex;justify-content:space-between;font-size:4vh;padding:.9vh 0;border-bottom:1px solid var(--line)}
+  .row span:last-child{color:var(--muted)} .waits .row{font-size:3vh}
+  .waits .dot{display:inline-block;width:1.6vh;height:1.6vh;border-radius:50%;margin-right:1vh}
+  footer{grid-column:1/-1;background:var(--brand);border-radius:2vh;padding:1.4vh 2vw;font-size:3.2vh;white-space:nowrap;overflow:hidden}
+  footer span{display:inline-block;padding-left:100%;animation:scroll 28s linear infinite}
+  @keyframes scroll{to{transform:translateX(-100%)}}
+  #sound{position:fixed;inset:0;background:#000c;display:none;align-items:center;justify-content:center;z-index:40;font-size:4vh}
+  .empty{color:var(--muted);font-size:4vh;text-align:center;padding-top:8vh}
+</style></head><body>
+<div class="tv">
+  <header><div class="org" id="org">OMZA QUEUE</div><div id="clock"></div></header>
+  <section class="current" id="current"></section>
+  <aside>
+    <div class="side"><h2>Derniers appels</h2><div id="recent"></div></div>
+    <div class="side waits" style="margin-top:1.5vh"><h2>En attente</h2><div id="waits"></div></div>
+  </aside>
+  <footer><span id="ticker"></span></footer>
+</div>
+<div id="sound"><button style="font-size:4vh;padding:2vh 4vw" id="enable">Activer le son</button></div>
+<script src="/socket.io/socket.io.js"></script>
+<script src="/shared/common.js"></script>
+<script>
+const services = new URLSearchParams(location.search).get('services') || '';
+let settings = {}, lastCalled = new Map(), firstLoad = true;
+
+setInterval(() => { document.getElementById('clock').textContent = new Date().toLocaleString('fr-FR', { dateStyle: 'full', timeStyle: 'medium' }); }, 1000);
+
+// ---- Annonces vocales : synthèse locale du navigateur/système (aucun service Internet)
+const speech = { queue: [], busy: false, ready: false };
+function frenchVoice() {
+  const vs = speechSynthesis.getVoices().filter((v) => v.lang.toLowerCase().startsWith('fr'));
+  const wanted = localStorage.getItem('omza_voice');
+  return vs.find((v) => v.name === wanted) || vs.find((v) => v.localService) || vs[0] || null;
+}
+function beep() {
+  try {
+    const a = new (window.AudioContext || window.webkitAudioContext)(), o = a.createOscillator(), g = a.createGain();
+    o.connect(g); g.connect(a.destination); o.frequency.value = 880; g.gain.value = Number(settings.voice_volume || 1) * .3;
+    o.start(); o.stop(a.currentTime + .25);
+  } catch {}
+}
+function announce(ticket, counter) {
+  if (settings.voice_enabled === 'false' || !speech.ready) return;
+  const text = (settings.announce_template || 'Numéro {ticket}, guichet {counter}.')
+    .replace('{ticket}', ticket.replace(/^([A-Z]+)0*(\d+)$/, '$1 $2')).replace('{counter}', counter);
+  const times = Math.max(1, Math.min(3, Number(settings.voice_repeat || 1)));
+  for (let i = 0; i < times; i++) speech.queue.push(text);
+  pump();
+}
+function pump() {
+  if (speech.busy || !speech.queue.length) return;
+  speech.busy = true; beep();
+  const u = new SpeechSynthesisUtterance(speech.queue.shift());
+  u.lang = 'fr-FR'; u.voice = frenchVoice(); u.volume = Number(settings.voice_volume || 1);
+  u.onend = u.onerror = () => { speech.busy = false; setTimeout(pump, 600); };
+  setTimeout(() => speechSynthesis.speak(u), 350);
+}
+document.getElementById('enable').onclick = () => {
+  speech.ready = true; document.getElementById('sound').style.display = 'none';
+  speechSynthesis.speak(new SpeechSynthesisUtterance(''));
+};
+
+// ---- Rendu
+function render(s) {
+  settings = s.settings;
+  document.getElementById('org').textContent = settings.org_name || 'OMZA QUEUE';
+  document.getElementById('ticker').textContent = settings.ticker_message || '';
+  const cur = document.getElementById('current');
+  cur.innerHTML = s.current.length ? s.current.slice(0, 4).map((c) => `
+    <div class="call ${c.fresh ? 'flash' : ''}" style="--c:${Q.esc(c.service_color)}">
+      <div><div class="num">${Q.esc(c.ticket_number)}</div><div class="svc">${Q.esc(c.service_name)}</div></div>
+      <div class="gui">Guichet<b>${Q.esc(c.counter_number)}</b></div></div>`).join('')
+    : '<div class="empty">En attente du prochain appel…</div>';
+  document.getElementById('recent').innerHTML = s.recent.map((r) =>
+    `<div class="row"><span>${Q.esc(r.ticket_number)}</span><span>Guichet ${Q.esc(r.counter_number)}</span></div>`).join('') || '<div class="empty" style="font-size:2.6vh;padding:2vh 0">—</div>';
+  document.getElementById('waits').innerHTML = s.services.map((x) =>
+    `<div class="row"><span><i class="dot" style="background:${Q.esc(x.color)}"></i>${Q.esc(x.name)}</span><span>${x.waiting}</span></div>`).join('');
+}
+async function refresh(announceFor) {
+  const s = await Q.api('/api/display/state' + (services ? '?services=' + services : ''));
+  s.current.forEach((c) => { c.fresh = announceFor && announceFor.id === c.id; });
+  render(s);
+}
+
+Q.start(['affichage', 'administrateur', 'superviseur'], async () => {
+  await refresh();
+  if ('speechSynthesis' in window) {
+    speechSynthesis.getVoices();
+    const p = new URLSearchParams(location.search);
+    if (p.get('autosound') === '1') speech.ready = true; else document.getElementById('sound').style.display = 'flex';
+  }
+  const sock = Q.socket();
+  const inScope = (t) => !services || services.split(',').includes(String(t.service_id));
+  const onCall = (t) => { if (!inScope(t)) return; refresh(t); announce(t.ticket_number, t.counter_number); };
+  sock.on('ticket.called', onCall);
+  sock.on('ticket.recalled', onCall); // « Rappeler » répète l'annonce
+  ['ticket.completed', 'ticket.absent', 'ticket.skipped', 'ticket.transferred', 'ticket.cancelled', 'ticket.created', 'queue.updated']
+    .forEach((e) => sock.on(e, () => refresh()));
+  setInterval(() => refresh().catch(() => {}), 30000); // filet de sécurité après une coupure réseau
+  sock.on('connect', () => refresh());
+});
+</script></body></html>

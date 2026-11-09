@@ -3,7 +3,7 @@ name: Android APK
 on:
   push:
     branches: [main, 'ccr-**']
-    paths: ['mobile/**', '.github/workflows/android-apk.yml']
+    paths: ['mobile/**', 'server/public/**', '.github/workflows/android-apk.yml']
   workflow_dispatch:
 
 jobs:
@@ -22,6 +22,11 @@ jobs:
         with:
           channel: stable
           cache: true
+      - name: Pages web embarquées à jour
+        working-directory: .
+        run: |
+          sh mobile/tool/sync_web.sh
+          git diff --exit-code -- mobile/assets/web || (echo "mobile/assets/web n'est pas synchronisé avec server/public : lancez mobile/tool/sync_web.sh" && exit 1)
       - run: flutter pub get
       - run: flutter analyze
       - run: flutter test
